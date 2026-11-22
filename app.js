@@ -67,7 +67,8 @@ const topicUrl = (topic) => `${S.settings.server.replace(/\/+$/, "")}/${topic}`;
 const resTopics = () => `${S.settings.res},${S.settings.res}-quiet`;
 
 const KEEP_DAYS = 30;
-const PING_EVERY_MS = 5 * 60_000;
+/** A hello this recent counts as online when no ping has been sent this session. */
+const RECENT_HELLO_MS = 5 * 60_000;
 const PING_TIMEOUT_MS = 45_000;
 
 // ---------- persistence ----------
@@ -266,7 +267,18 @@ function connect() {
 async function publish(msg) {
   const env = await C.seal(S.key, "req", msg);
   const r = await fetch(topicUrl(S.settings.req), { method: "POST", body: env });
-  if (!r.ok) throw new Error(`publish failed: ${r.status}`);
+  if (!r.ok) {
+    let detail = "";
+    try {
+      const body = await r.json();
+      const retry = Number(r.headers.get("retry-after"));
+      detail = body.error ? `: ${body.error}` : "";
+      if (body.code === 42908 && retry) detail = `: ntfy.sh daily message limit for this network reached; try again in ~${Math.ceil(retry / 3600)} h or switch Wi-Fi/cellular`;
+    } catch {
+      // non-JSON error body
+    }
+    throw new Error(`publish failed (${r.status})${detail}`);
+  }
 }
 
 async function startFeed() {
@@ -280,10 +292,21 @@ async function startFeed() {
   await prune();
   scheduleRender();
   connect();
-  // Laptops are the source of truth; refilling on every load repairs a cache that iOS cleared
-  // or that belongs to the other storage (Safari tab vs. home-screen app).
-  send(C.request("history", { since: Math.floor(Date.now() / 1000) - KEEP_DAYS * 86400, limit: 100 }));
-  ping();
+  // Laptops are the source of truth; refilling on open repairs a cache that iOS cleared or that
+  // belongs to the other storage (Safari tab vs. home-screen app). Throttled like auto-pings
+  // because every publish counts against ntfy.sh's per-IP rate limit.
+  const lastHistory = (await DB.get("kv", "lastHistory")) || 0;
+  if (Date.now() - lastHistory >= AUTO_PING_MIN_GAP_MS || !S.jobs.size) {
+    await DB.put("kv", Date.now(), "lastHistory");
+    send(C.request("history", { since: Math.floor(Date.now() / 1000) - KEEP_DAYS * 86400, limit: 100 }));
+  }
+  autoPing();
+}
+
+/** Pings on opening the app or returning to it, unless the last ping (any trigger) was within 15 min. */
+async function autoPing() {
+  if (!S.settings || !S.key) return;
+  if (Date.now() - S.lastPingAt >= AUTO_PING_MIN_GAP_MS) ping();
 }
 
 /** Forgets jobs (and their turns) untouched for KEEP_DAYS, and laptops silent that long. */
@@ -305,7 +328,7 @@ async function prune() {
 /** online: answered the latest ping (or spoke recently); waiting: ping in flight; offline: missed it. */
 function machineStatus(m) {
   const recv = m.recv || 0;
-  if (!S.lastPingAt) return Date.now() - recv < PING_EVERY_MS + PING_TIMEOUT_MS ? "online" : "unknown";
+  if (!S.lastPingAt) return Date.now() - recv < RECENT_HELLO_MS ? "online" : "unknown";
   if (recv >= S.lastPingAt - 2000) return "online";
   return Date.now() - S.lastPingAt < PING_TIMEOUT_MS ? "waiting" : "offline";
 }
@@ -321,21 +344,15 @@ async function send(msg, okText) {
   }
 }
 
+/** Opening the app pings at most this often; the Ping button always pings. */
+const AUTO_PING_MIN_GAP_MS = 15 * 60_000;
+
 function ping() {
   S.lastPingAt = Date.now();
+  DB.put("kv", S.lastPingAt, "lastPing");
   // Re-render after the timeout so laptops that stayed silent show as offline.
   setTimeout(scheduleRender, PING_TIMEOUT_MS + 500);
   return send(C.request("ping"));
-}
-
-/** Pings while the page is visible: on return to the page and every PING_EVERY_MS. */
-function startHeartbeat() {
-  setInterval(() => {
-    if (document.visibilityState === "visible" && S.settings && S.key) ping();
-  }, PING_EVERY_MS);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && S.settings && S.key && Date.now() - S.lastPingAt > 60_000) ping();
-  });
 }
 
 async function adoptSession(machine, sess) {
@@ -781,7 +798,7 @@ function renderMachines() {
   const ms = knownMachines();
   shell(
     h("div", { class: "section-head" }, h("h2", {}, "Machines"), h("button", { class: "primary", onclick: () => ping().then((ok) => ok && toast("Ping sent")) }, "Ping")),
-    h("p", { class: "muted small" }, "Laptops are pinged every 5 minutes while this page is open."),
+    h("p", { class: "muted small" }, "Laptops are pinged when you open the app (at most every 15 minutes) or when you tap Ping."),
     ms.length
       ? h(
           "ul",
@@ -1084,6 +1101,7 @@ async function boot() {
   S.key = (await DB.get("kv", "key")) || null;
   S.lastId = (await DB.get("kv", "lastId")) || null;
   S.lastRecv = (await DB.get("kv", "lastRecv")) || 0;
+  S.lastPingAt = (await DB.get("kv", "lastPing")) || 0;
   for (const j of await DB.all("jobs")) S.jobs.set(j.job, j);
   for (const m of await DB.all("machines")) S.machines.set(m.machine, m);
   takeSetupFromUrl();
@@ -1095,10 +1113,11 @@ async function boot() {
     render();
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && S.settings && S.key && !S.es) connect();
+    if (document.visibilityState !== "visible" || !S.settings || !S.key) return;
+    if (!S.es) connect();
+    autoPing();
   });
   setInterval(renderStatusBar, 15000);
-  startHeartbeat();
   await render();
   if (S.settings && S.key) startFeed();
   if ("serviceWorker" in navigator) {
