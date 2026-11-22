@@ -1,0 +1,110 @@
+{
+  "description": "claude-dispatch protocol v1 test vectors. Throwaway key, never used in production.",
+  "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "negative": [
+    {
+      "envelope": {
+        "ct": "WIneG8XlwhuNvoJAiOf4TZOWVo+8Fp5C+Aq9g7h5iGgZ83M5XST1pySXB40E9AmcuhML7kp71vS7j3nTgUvhthAGBwnn+aJXkBl17Qm2ZLNfp469CQ7ueUHiNWfui++Ny/g+iKyJoObQTK6EbeXaw4PD",
+        "d": "req",
+        "iv": "AAECAwQFBgcICQoL",
+        "v": 1
+      },
+      "name": "request_opened_as_response",
+      "open_as": "res"
+    },
+    {
+      "envelope": {
+        "ct": "WIneG8XlwhuNvoJAiOf4TZOWVo+8Fp5C+Aq9g7h5iGgZ83M5XST1pySXB40E9AmcuhML7kp71vS7j3nTgUvhthAGBwnn+aJXkBl17Qm2ZLNfp469CQ7ueUHiNWfui++Ny/g+iKyJoObQTK6EbeXaw4PD",
+        "d": "res",
+        "iv": "AAECAwQFBgcICQoL",
+        "v": 1
+      },
+      "name": "direction_field_flipped",
+      "open_as": "res"
+    },
+    {
+      "envelope": {
+        "ct": "WYneG8XlwhuNvoJAiOf4TZOWVo+8Fp5C+Aq9g7h5iGgZ83M5XST1pySXB40E9AmcuhML7kp71vS7j3nTgUvhthAGBwnn+aJXkBl17Qm2ZLNfp469CQ7ueUHiNWfui++Ny/g+iKyJoObQTK6EbeXaw4PD",
+        "d": "req",
+        "iv": "AAECAwQFBgcICQoL",
+        "v": 1
+      },
+      "name": "tampered_ciphertext",
+      "open_as": "req"
+    },
+    {
+      "envelope": {
+        "ct": "WIneG8XlwhuNvoJAiOf4TZOWVo+8Fp5C+Aq9g7h5iGgZ83M5XST1pySXB40E9AmcuhML7kp71vS7j3nTgUvhthAGBwnn+aJXkBl17Qm2ZLNfp469CQ7ueUHiNWfui++Ny/g+iKyJoObQTK6EbeXaw4PD",
+        "d": "req",
+        "iv": "AAECAwQFBgcICQoL",
+        "v": 1
+      },
+      "key": "_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-8",
+      "name": "wrong_key",
+      "open_as": "req"
+    }
+  ],
+  "v": 1,
+  "vectors": [
+    {
+      "aad": "cd1|req",
+      "dir": "req",
+      "envelope": {
+        "ct": "WIneG8XlwhuNvoJAiOf4TZOWVo+8Fp5C+Aq9g7h5iGgZ83M5XST1pySXB40E9AmcuhML7kp71vS7j3nTgUvhthAGBwnn+aJXkBl17Qm2ZLNfp469CQ7ueUHiNWfui++Ny/g+iKyJoObQTK6EbeXaw4PD",
+        "d": "req",
+        "iv": "AAECAwQFBgcICQoL",
+        "v": 1
+      },
+      "gzip_b64": "H4sIAAAAAAAA/xXLOQ6AIBBA0btMbcE+wG1YBqUQiNoY493F8uXnP1AzeGCMcyGkVEprYxCtdS6EGFPKmagUWOA6wXM0KIQ2jE3fg+Y5altnLUfff229Ebwfq6uWe1YAAAA=",
+      "iv_b64": "AAECAwQFBgcICQoL",
+      "name": "req_ping",
+      "plaintext": "{\"id\":\"00112233445566778899aabbccddeeff\",\"ts\":1767225600,\"type\":\"ping\",\"from\":\"phone\"}",
+      "source": "rust"
+    },
+    {
+      "aad": "cd1|req",
+      "dir": "req",
+      "envelope": {
+        "ct": "YnWQFknJOrPKigXWQnfrY8NUrqWDdYGJyinIHBF0Q3vk7WPTYiRfKQZB9ahHV0T9OxEnN6FP2XKiSWbREkcELQDzPOsYSEZujh2CSKnxHPkuJncY1IEZZIht0oUmw+1BE4VTHOqZA3acbcOg/lQ3yCIwVGtboUMkC8XCGoKzKTe+TkgmduJX2+oH+V7BMA9j1UarRAZT",
+        "d": "req",
+        "iv": "EBESExQVFhcYGRob",
+        "v": 1
+      },
+      "gzip_b64": "H4sIAAAAAAAA/w3LTQ6CMBQE4KuYt9Y4LdAqe08gF6C0BDTQl4Ixxnh3Z/nNz1fmKK1gRELEgIAeV1zg4dCgRgULA8hR9k1a4523tnEw9EcTn+W1shxLXgid8prIRw5Ub4IdqlgzeOfyZBLTkinlWnf6vE2zHrrbvTsZ+f0B0SwjjYwAAAA=",
+      "iv_b64": "EBESExQVFhcYGRob",
+      "name": "req_run",
+      "plaintext": "{\"id\":\"0f0e0d0c0b0a09080706050403020100\",\"ts\":1767225601,\"type\":\"run\",\"from\":\"phone\",\"job\":\"a1b2c3d4\",\"work\":\"demo\",\"prompt\":\"/ship TEST-1\"}",
+      "source": "rust"
+    },
+    {
+      "aad": "cd1|res",
+      "dir": "res",
+      "envelope": {
+        "ct": "zbGucGyYGg4agxdDihI2ycQMW4611is8WkexkqJC8VFQA8Gt3GHdCpX+L9V6sRzft/pdxWpJxZFQGaGmS24SgTmce92OOnAEOUb+LJplFuvpWAHCn96C0b/FeoiYF1jWTEzKKKOlrNVQJqx6vkpOjxzd/GWkThpaUNZSQ5KhhShEMclo5DT4AWTtDpmemWs1t/ZTBQEdzN00cFqzhu7lhkYJ8owtgjJvkfQma19ZoQtEQIJkqszgj+XXIKTmOhe4MXppqRDoaI1tmMqzkEE=",
+        "d": "res",
+        "iv": "ICEiIyQlJicoKSor",
+        "v": 1
+      },
+      "gzip_b64": "H4sIAAAAAAAA/1WNSwrCMBRFtxIyVkjSNrHdgOvIr1gljSSpUkTo0IEDQUciuAMXVdCxS/B16PCee967B9wYXOG6ttYYrZWSsiwXCyE4L4o8zzLGKCUEz3CKuKKCC8YKThjkfmvhMiaZugh9HbyDnGxMcyc1kLVXACRVTGcmBwB41bT239r7sAFirPOQpneTYDx4MNKFFlcEeOecDD00S5/8zqPxcUXjcEPv1/lzuqDv8z7g4w8vso4XzgAAAA==",
+      "iv_b64": "ICEiIyQlJicoKSor",
+      "name": "res_status_unicode",
+      "plaintext": "{\"id\":\"ffeeddccbbaa99887766554433221100\",\"ts\":1767225602,\"type\":\"status\",\"from\":\"test-mac\",\"job\":\"a1b2c3d4\",\"machine\":\"test-mac\",\"work\":\"demo\",\"state\":\"done\",\"turn\":0,\"summary\":\"Gotovo ✓ — 完成 🚀\"}",
+      "source": "rust"
+    },
+    {
+      "aad": "cd1|req",
+      "dir": "req",
+      "envelope": {
+        "ct": "+ZN0LUXLAr9idiyFzTaRbCKeFNSdIjb41oSzKnNmuM1f+gsyoi7TwZUeUGjH2Fd721HmPDiBZFDRBZvPO+ePVNJZom5JLGKpsis5ManuIRPYLus1FSPN/wzn+m59JjkRyIl4v/EdYg702usWWxxoKCRQ3JkDBJiuBlFwUnNlmOQZ3Q==",
+        "d": "req",
+        "iv": "oKGio6Slpqeoqaqr",
+        "v": 1
+      },
+      "gzip_b64": "H4sIAAAAAAAAE6tWykxRslIyTcQPlXSUSoqVrAzNzcyNjEzNDQyA/MqCVKDOotSCnEqgdFpRfi6QW5CRn5cK5GblJwF5iYZJRsnGKSYg7akVJUCR0OJUheKSxPTMvHSFRw1TFPKz7ZVqAe1G3pSFAAAA",
+      "iv_b64": "oKGio6Slpqeoqaqr",
+      "name": "req_reply_js",
+      "plaintext": "{\"id\":\"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a\",\"ts\":1767225700,\"type\":\"reply\",\"from\":\"phone\",\"job\":\"a1b2c3d4\",\"text\":\"Use staging — ok?\"}",
+      "source": "js"
+    }
+  ]
+}
