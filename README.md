@@ -8,7 +8,7 @@ Everything is end-to-end encrypted (AES-256-GCM, see [PROTOCOL.md](PROTOCOL.md))
 
 1. Open the Pages URL and add it to the home screen.
 2. On a Mac run `cdispatch pair` and scan the QR: on iPhone from inside the home-screen app (Settings > Scan setup QR), elsewhere with the camera. Confirm the server and topics, tap Import. The values can also be pasted or typed under Settings.
-3. Compose `<prompt> <work> [@machine]`, e.g. `/ship ABC-123 myrepo`.
+3. Compose `<laptop> <repo> <anything for Claude>`, e.g. `my-laptop myrepo fix the failing tests`. Chips suggest laptops, then that laptop's repos. `<repo> <anything>` also works when only one laptop has that repo.
 
 ## Develop
 

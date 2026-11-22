@@ -1,5 +1,5 @@
 // Offline shell: network first, cached copy when offline. Cross-origin (ntfy) is never cached.
-const CACHE = "cd-shell-v2";
+const CACHE = "cd-shell-v3";
 const SHELL = ["./", "index.html", "app.js", "crypto.js", "db.js", "command.js", "setup.js", "style.css", "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {

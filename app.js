@@ -1,6 +1,6 @@
 import * as C from "./crypto.js";
 import * as DB from "./db.js";
-import { parseCommand } from "./command.js";
+import { parseCommand, suggest } from "./command.js";
 import { parseSetup } from "./setup.js";
 
 const STATE_RANK = { sent: 0, queued: 1, started: 2 };
@@ -278,16 +278,13 @@ function ping() {
 
 // ---------- actions ----------
 
-async function runJob(prompt, work, target, line) {
+async function runJob(prompt, work, target) {
   const job = C.randomHex(4);
   const fields = { job, work, prompt };
   if (target) fields.target = target;
   const now = Math.floor(Date.now() / 1000);
   await saveJob({ job, work, prompt, machine: target || "", state: "sent", turn: 0, created: now, updated: now, local: true });
   await mergeTurn(job, 0, { input: prompt, state: "sent", ts: now });
-  const recent = ((await DB.get("kv", "recent")) || []).filter((r) => r !== line);
-  recent.unshift(line);
-  await DB.put("kv", recent.slice(0, 8), "recent");
   if (await send(C.request("run", fields))) location.hash = `#job=${job}`;
 }
 
@@ -353,7 +350,7 @@ function shell(...content) {
     nav(),
     h("div", { id: "statusbar", class: "statusbar" }),
     h("div", { id: "keywarn", class: "banner error", hidden: true }, "Messages are arriving but none decrypt. The key is probably wrong; re-enter it in Settings."),
-    ...content,
+    ...content.filter(Boolean),
   );
   renderStatusBar();
 }
@@ -372,92 +369,170 @@ function knownMachines() {
   return [...S.machines.values()].sort((a, b) => a.machine.localeCompare(b.machine));
 }
 
-async function renderJobs() {
-  const recent = (await DB.get("kv", "recent")) || [];
-  const machines = knownMachines();
-  const works = [...new Set(machines.flatMap((m) => m.works))].sort();
-  const input = h("input", {
-    id: "cmd",
-    type: "text",
-    inputmode: "text",
-    autocapitalize: "off",
-    autocomplete: "off",
-    spellcheck: "false",
-    placeholder: "/ship ABC-123 <work> @machine",
-    "aria-label": "Command",
-    value: S.pending?.line || "",
-  });
-  const appendToken = (tok) => {
-    input.value = `${input.value.trim()} ${tok}`.trimStart() + " ";
-    input.focus();
+const ACTIVE = new Set(["sent", "queued", "started", "needs_input"]);
+
+function prefGet(k) {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+}
+function prefSet(k, v) {
+  try {
+    localStorage.setItem(k, v);
+  } catch {
+    // per-device convenience only
+  }
+}
+
+/** Textarea that grows with its content, with a clear button. */
+function clearableTextarea(attrs, onChange) {
+  const ta = h("textarea", { rows: 1, ...attrs });
+  const clear = h("button", { type: "button", class: "clear", "aria-label": "Clear", hidden: !ta.value }, "×");
+  const sync = () => {
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 240)}px`;
+    clear.hidden = !ta.value;
+    onChange?.(ta.value);
   };
+  ta.addEventListener("input", sync);
+  clear.addEventListener("click", () => {
+    ta.value = "";
+    sync();
+    ta.focus();
+  });
+  requestAnimationFrame(sync);
+  return { el: h("div", { class: "clearable" }, ta, clear), ta, sync };
+}
+
+function jobItem(j) {
+  return h(
+    "li",
+    {},
+    h(
+      "a",
+      { href: `#job=${encodeURIComponent(j.job)}`, class: `job ${j.state === "needs_input" ? "attn" : ""}` },
+      h("div", { class: "jrow" }, badge(j.state), h("span", { class: "muted small" }, ago(j.updated ?? j.created))),
+      h("div", { class: "prompt" }, j.prompt || `(job ${j.job})`),
+      h("div", { class: "muted small" }, [j.machine, j.work].filter(Boolean).join(" · ")),
+    ),
+  );
+}
+
+async function renderJobs() {
+  const machines = knownMachines();
+  const chips = h("div", { class: "chips" });
+  const hint = h("div", { class: "muted small" });
+
+  const updateChips = (value) => {
+    const sg = suggest(value, machines);
+    chips.replaceChildren(
+      ...sg.items.map((item) =>
+        h(
+          "button",
+          {
+            type: "button",
+            class: sg.kind === "machine" ? "chip alt" : "chip",
+            onclick: () => {
+              box.ta.value = `${sg.prefix}${item} `;
+              box.sync();
+              box.ta.focus();
+            },
+          },
+          item,
+        ),
+      ),
+    );
+    hint.textContent = !machines.length
+      ? "No laptops yet. Open Machines and tap Ping."
+      : sg.kind === "machine"
+        ? "Pick a laptop"
+        : sg.kind === "repo"
+          ? "Pick a repo"
+          : "";
+  };
+
+  const box = clearableTextarea(
+    {
+      id: "cmd",
+      autocapitalize: "off",
+      autocomplete: "off",
+      autocorrect: "off",
+      spellcheck: "false",
+      placeholder: "laptop  repo  what to do\ne.g. my-mac api fix the tests",
+      "aria-label": "Command: laptop, repo, then the prompt",
+    },
+    updateChips,
+  );
+  box.ta.value = S.pending?.line || "";
+
   const submit = async (e, forcedTarget) => {
     e?.preventDefault();
-    let line = input.value.trim();
-    if (forcedTarget) line = `${line} @${forcedTarget}`;
-    const p = parseCommand(line, machines);
+    const line = box.ta.value;
+    let p = parseCommand(line, machines);
+    if (forcedTarget && p.choices) p = { target: forcedTarget, work: p.work, prompt: p.prompt };
     if (p.error) {
       S.composeError = p.error;
       S.composeChoices = p.choices || null;
-      S.pending = { line: input.value.trim() };
+      S.pending = { line };
       return render();
     }
     S.composeError = "";
     S.composeChoices = null;
     S.pending = null;
-    await runJob(p.prompt, p.work, p.target, line);
+    await runJob(p.prompt, p.work, p.target);
   };
 
   const compose = h(
     "form",
     { class: "compose", onsubmit: submit },
-    h("div", { class: "row" }, input, h("button", { class: "primary", type: "submit" }, "Run")),
+    box.el,
+    h("button", { class: "primary run", type: "submit" }, "Run"),
     S.composeError ? h("div", { class: "error" }, S.composeError) : null,
     S.composeChoices
-      ? h("div", { class: "chips" }, S.composeChoices.map((m) => h("button", { type: "button", class: "chip primary", onclick: (e) => submit(e, m) }, `Run on @${m}`)))
+      ? h("div", { class: "chips" }, S.composeChoices.map((m) => h("button", { type: "button", class: "chip primary", onclick: (e) => submit(e, m) }, `Run on ${m}`)))
       : null,
-    works.length || machines.length
-      ? h(
-          "div",
-          { class: "chips" },
-          works.map((w) => h("button", { type: "button", class: "chip", onclick: () => appendToken(w) }, w)),
-          machines.map((m) => h("button", { type: "button", class: "chip alt", onclick: () => appendToken(`@${m.machine}`) }, `@${m.machine}`)),
-        )
-      : h("div", { class: "muted small" }, "No machines yet. Open Machines and ping."),
-    recent.length
-      ? h("div", { class: "chips" }, recent.map((r) => h("button", { type: "button", class: "chip ghost", onclick: () => { input.value = r; input.focus(); } }, r)))
-      : null,
+    chips,
+    hint,
   );
+  updateChips(box.ta.value);
 
   const jobs = [...S.jobs.values()].sort((a, b) => (b.updated ?? b.created ?? 0) - (a.updated ?? a.created ?? 0));
-  const list = h(
-    "ul",
-    { class: "jobs" },
-    jobs.length
-      ? jobs.map((j) =>
-          h(
-            "li",
-            {},
-            h(
-              "a",
-              { href: `#job=${encodeURIComponent(j.job)}`, class: `job ${j.state === "needs_input" ? "attn" : ""}` },
-              h("div", { class: "jrow" }, badge(j.state), h("span", { class: "muted small" }, ago(j.updated ?? j.created))),
-              h("div", { class: "prompt" }, j.prompt || `(job ${j.job})`),
-              h("div", { class: "muted small" }, [j.work, j.machine && `@${j.machine}`].filter(Boolean).join(" ")),
-            ),
-          ),
+  const active = jobs.filter((j) => ACTIVE.has(j.state));
+  const past = jobs.filter((j) => !ACTIVE.has(j.state));
+  const shown = Number(prefGet("cd-history-shown")) || 20;
+
+  const history = h(
+    "details",
+    {
+      class: "history",
+      open: prefGet("cd-history-open") === "1",
+      ontoggle: (e) => prefSet("cd-history-open", e.target.open ? "1" : "0"),
+    },
+    h("summary", {}, `History (${past.length})`),
+    past.length ? h("ul", { class: "jobs" }, past.slice(0, shown).map(jobItem)) : h("p", { class: "muted small" }, "Nothing yet."),
+    past.length > shown
+      ? h(
+          "button",
+          {
+            class: "small-btn",
+            onclick: () => {
+              prefSet("cd-history-shown", String(shown + 20));
+              render();
+            },
+          },
+          `Show ${Math.min(20, past.length - shown)} more`,
         )
-      : h("li", { class: "muted empty" }, "No jobs yet."),
+      : null,
+    h("button", { class: "small-btn", onclick: () => send(C.request("history", { limit: 50 }), "Asked the laptops for history") }, "Load older from laptops"),
   );
+
   shell(
     compose,
-    h(
-      "div",
-      { class: "section-head" },
-      h("h2", {}, "Jobs"),
-      h("button", { class: "small-btn", onclick: () => send(C.request("history", { limit: 50 }), "History requested") }, "Refresh history"),
-    ),
-    list,
+    active.length ? h("h2", { class: "section-title" }, "Active") : null,
+    active.length ? h("ul", { class: "jobs" }, active.map(jobItem)) : null,
+    history,
   );
 }
 
@@ -502,20 +577,21 @@ async function renderJob(id) {
 
   const replyBox = REPLYABLE.has(j.state)
     ? (() => {
-        const ta = h("textarea", { rows: 3, placeholder: j.state === "needs_input" ? "Answer Claude…" : "Continue this session…", "aria-label": "Reply" });
+        const box = clearableTextarea({ placeholder: j.state === "needs_input" ? "Answer Claude…" : "Continue this session…", "aria-label": "Reply" });
         return h(
           "form",
           {
             class: "reply",
             onsubmit: async (e) => {
               e.preventDefault();
-              const text = ta.value.trim();
+              const text = box.ta.value.trim();
               if (!text) return;
-              ta.value = "";
+              box.ta.value = "";
+              box.sync();
               await reply(j, text);
             },
           },
-          ta,
+          box.el,
           h("button", { class: "primary", type: "submit" }, "Send reply"),
         );
       })()
@@ -840,8 +916,11 @@ async function boot() {
   for (const j of await DB.all("jobs")) S.jobs.set(j.job, j);
   for (const m of await DB.all("machines")) S.machines.set(m.machine, m);
   takeSetupFromUrl();
+  let lastView = location.hash;
   window.addEventListener("hashchange", () => {
     takeSetupFromUrl();
+    if (location.hash !== lastView) window.scrollTo(0, 0);
+    lastView = location.hash;
     render();
   });
   document.addEventListener("visibilitychange", () => {
