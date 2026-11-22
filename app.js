@@ -4,6 +4,7 @@ import { parseCommand, suggest } from "./command.js";
 import { parseSetup } from "./setup.js";
 
 const STATE_RANK = { sent: 0, queued: 1, started: 2 };
+const ACTIVE = new Set(["sent", "queued", "started", "needs_input"]);
 const TERMINAL = new Set(["done", "failed", "cancelled", "busy_rejected"]);
 const REPLYABLE = new Set(["needs_input", "done", "failed"]);
 const CANCELLABLE = new Set(["sent", "queued", "started", "needs_input"]);
@@ -24,6 +25,9 @@ const S = {
   composeError: "",
   composeChoices: null,
   pending: null,
+  live: false, // true once the 12h backfill is done and messages arrive in real time
+  lastPingAt: 0,
+  sessions: new Map(), // machine -> {at, list}
   importing: null, // parsed setup code awaiting confirmation
 };
 
@@ -58,6 +62,12 @@ function ago(ts) {
 
 const badge = (state) => h("span", { class: `badge s-${state || "unknown"}` }, (state || "?").replace("_", " "));
 const topicUrl = (topic) => `${S.settings.server.replace(/\/+$/, "")}/${topic}`;
+/** Responses: the main topic plus `<res>-quiet`, where laptops send replies that should not notify. */
+const resTopics = () => `${S.settings.res},${S.settings.res}-quiet`;
+
+const KEEP_DAYS = 30;
+const PING_EVERY_MS = 5 * 60_000;
+const PING_TIMEOUT_MS = 45_000;
 
 // ---------- persistence ----------
 
@@ -92,6 +102,7 @@ async function handleMessage(m) {
   if (m.type === "result") return onResult(m);
   if (m.type === "hello") return onHello(m);
   if (m.type === "history") return onHistory(m);
+  if (m.type === "sessions") return onSessions(m);
 }
 
 async function onStatus(m) {
@@ -133,13 +144,23 @@ async function onResult(m) {
 }
 
 async function onHello(m) {
-  const rec = { machine: m.machine, works: m.works || [], version: m.version, busy_jobs: m.busy_jobs || [], battery: m.battery, seen: m.ts };
+  // Live replies are timed on this device's clock, so they compare cleanly with lastPingAt.
+  const recv = S.live ? Date.now() : m.ts * 1000;
+  const prev = S.machines.get(m.machine);
+  if (prev && (prev.recv || 0) > recv) return;
+  const rec = { machine: m.machine, works: m.works || [], version: m.version, busy_jobs: m.busy_jobs || [], battery: m.battery, seen: m.ts, recv };
   S.machines.set(m.machine, rec);
   await DB.put("machines", rec);
 }
 
+function onSessions(m) {
+  S.sessions.set(m.machine, { at: Date.now(), list: m.sessions || [] });
+}
+
 async function onHistory(m) {
+  const cutoff = Math.floor(Date.now() / 1000) - KEEP_DAYS * 86400;
   for (const j of m.jobs || []) {
+    if ((j.updated ?? 0) < cutoff) continue;
     const cur = S.jobs.get(j.job);
     if (cur && !cur.local && (cur.updated ?? 0) >= j.updated) {
       if (!cur.prompt && j.prompt) await saveJob({ ...cur, prompt: j.prompt });
@@ -193,7 +214,7 @@ async function processEvent(ev) {
 // ---------- transport ----------
 
 async function poll() {
-  const r = await fetch(`${topicUrl(S.settings.res)}/json?poll=1&since=12h`);
+  const r = await fetch(`${topicUrl(resTopics())}/json?poll=1&since=12h`);
   if (!r.ok) throw new Error(`poll failed: ${r.status}`);
   for (const line of (await r.text()).split("\n")) {
     if (!line.trim()) continue;
@@ -208,7 +229,7 @@ async function poll() {
 function connect() {
   if (S.es) S.es.close();
   const since = S.lastId || "12h";
-  const es = new EventSource(`${topicUrl(S.settings.res)}/sse?since=${encodeURIComponent(since)}`);
+  const es = new EventSource(`${topicUrl(resTopics())}/sse?since=${encodeURIComponent(since)}`);
   S.es = es;
   let chain = Promise.resolve();
   es.onopen = () => {
@@ -245,19 +266,45 @@ async function publish(msg) {
 }
 
 async function startFeed() {
+  S.live = false;
   try {
     await poll();
   } catch (e) {
     toast(String(e.message || e));
   }
+  S.live = true;
+  await prune();
   scheduleRender();
   connect();
   if (!(await DB.get("kv", "historyRequested"))) {
     await DB.put("kv", true, "historyRequested");
     send(C.request("history", { limit: 50 }));
   }
-  const lastPing = (await DB.get("kv", "lastPing")) || 0;
-  if (!S.machines.size || Date.now() - lastPing > 3600_000) ping();
+  ping();
+}
+
+/** Forgets jobs (and their turns) untouched for KEEP_DAYS, and laptops silent that long. */
+async function prune() {
+  const cutoff = Math.floor(Date.now() / 1000) - KEEP_DAYS * 86400;
+  for (const j of [...S.jobs.values()]) {
+    if ((j.updated ?? j.created ?? 0) >= cutoff || ACTIVE.has(j.state)) continue;
+    for (const t of await DB.turnsFor(j.job)) await DB.del("turns", [j.job, t.turn]);
+    await DB.del("jobs", j.job);
+    S.jobs.delete(j.job);
+  }
+  for (const m of [...S.machines.values()]) {
+    if ((m.seen ?? 0) >= cutoff) continue;
+    await DB.del("machines", m.machine);
+    S.machines.delete(m.machine);
+  }
+}
+
+/** online: answered the latest ping (or spoke recently); waiting: ping in flight; offline: missed it. */
+function machineStatus(m) {
+  const recv = m.recv || 0;
+  if (!S.lastPingAt) return Date.now() - recv < PING_EVERY_MS + PING_TIMEOUT_MS ? "online" : "unknown";
+  if (recv >= S.lastPingAt - 2000) return "online";
+  return Date.now() - S.lastPingAt < PING_TIMEOUT_MS ? "waiting" : "offline";
 }
 
 async function send(msg, okText) {
@@ -272,8 +319,27 @@ async function send(msg, okText) {
 }
 
 function ping() {
-  DB.put("kv", Date.now(), "lastPing");
+  S.lastPingAt = Date.now();
+  // Re-render after the timeout so laptops that stayed silent show as offline.
+  setTimeout(scheduleRender, PING_TIMEOUT_MS + 500);
   return send(C.request("ping"));
+}
+
+/** Pings while the page is visible: on return to the page and every PING_EVERY_MS. */
+function startHeartbeat() {
+  setInterval(() => {
+    if (document.visibilityState === "visible" && S.settings && S.key) ping();
+  }, PING_EVERY_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && S.settings && S.key && Date.now() - S.lastPingAt > 60_000) ping();
+  });
+}
+
+async function adoptSession(machine, sess) {
+  const job = C.randomHex(4);
+  const now = Math.floor(Date.now() / 1000);
+  await saveJob({ job, work: sess.work, prompt: sess.title, machine, state: "sent", turn: 0, created: now, updated: now, local: true });
+  if (await send(C.request("adopt", { target: machine, job, work: sess.work, session_id: sess.session_id }))) location.hash = `#job=${job}`;
 }
 
 // ---------- actions ----------
@@ -369,8 +435,6 @@ function knownMachines() {
   return [...S.machines.values()].sort((a, b) => a.machine.localeCompare(b.machine));
 }
 
-const ACTIVE = new Set(["sent", "queued", "started", "needs_input"]);
-
 function prefGet(k) {
   try {
     return localStorage.getItem(k);
@@ -433,14 +497,14 @@ async function renderJobs() {
           "button",
           {
             type: "button",
-            class: sg.kind === "machine" ? "chip alt" : "chip",
+            class: sg.kind === "machine" ? `chip alt ${machineStatus(S.machines.get(item) || {}) === "offline" ? "off" : ""}` : "chip",
             onclick: () => {
               box.ta.value = `${sg.prefix}${item} `;
               box.sync();
               box.ta.focus();
             },
           },
-          item,
+          sg.kind === "machine" && machineStatus(S.machines.get(item) || {}) === "offline" ? `${item} · offline` : item,
         ),
       ),
     );
@@ -621,20 +685,62 @@ async function renderJob(id) {
   );
 }
 
+const STATUS_LABEL = { online: "online", waiting: "checking…", offline: "offline", unknown: "not checked" };
+
+function sessionList(m) {
+  const entry = S.sessions.get(m.machine);
+  if (!entry) return null;
+  if (!entry.list.length) return h("p", { class: "muted small" }, "No Claude sessions found in this laptop's repos.");
+  return h(
+    "ul",
+    { class: "sessions" },
+    entry.list.map((sess) =>
+      h(
+        "li",
+        {},
+        h("div", { class: "prompt" }, sess.title || "(untitled)"),
+        h(
+          "div",
+          { class: "muted small" },
+          [sess.work, sess.origin === "terminal" ? "terminal" : "headless", ago(sess.updated)].join(" · "),
+        ),
+        sess.last ? h("div", { class: "last small" }, sess.last) : null,
+        sess.job
+          ? h("a", { class: "small-btn linkbtn", href: `#job=${encodeURIComponent(sess.job)}` }, "Open job")
+          : h(
+              "button",
+              {
+                class: "small-btn",
+                onclick: () => adoptSession(m.machine, sess),
+              },
+              "Continue on phone",
+            ),
+      ),
+    ),
+  );
+}
+
 function renderMachines() {
   const ms = knownMachines();
   shell(
     h("div", { class: "section-head" }, h("h2", {}, "Machines"), h("button", { class: "primary", onclick: () => ping().then((ok) => ok && toast("Ping sent")) }, "Ping")),
+    h("p", { class: "muted small" }, "Laptops are pinged every 5 minutes while this page is open."),
     ms.length
       ? h(
           "ul",
           { class: "machines" },
           ms.map((m) => {
             const low = m.battery && !m.battery.charging && m.battery.pct < 20;
+            const st = machineStatus(m);
             return h(
               "li",
               { class: "card" },
-              h("div", { class: "jrow" }, h("strong", {}, m.machine), h("span", { class: "muted small" }, ago(m.seen))),
+              h(
+                "div",
+                { class: "jrow" },
+                h("strong", {}, h("span", { class: `dot ${st}`, "aria-hidden": "true" }), " ", m.machine),
+                h("span", { class: `muted small st-${st}` }, `${STATUS_LABEL[st]} · ${ago(Math.floor((m.recv || m.seen * 1000) / 1000))}`),
+              ),
               h("div", { class: "chips" }, (m.works || []).map((w) => h("span", { class: "chip static" }, w))),
               h(
                 "div",
@@ -648,6 +754,15 @@ function renderMachines() {
                   .join(" · "),
               ),
               low ? h("div", { class: "error" }, "Battery low") : null,
+              h(
+                "button",
+                {
+                  class: "small-btn",
+                  onclick: () => send(C.request("sessions", { target: m.machine, limit: 15 }), `Asked ${m.machine} for its sessions`),
+                },
+                S.sessions.has(m.machine) ? "Refresh sessions" : "Show Claude sessions",
+              ),
+              sessionList(m),
             );
           }),
         )
@@ -927,6 +1042,7 @@ async function boot() {
     if (document.visibilityState === "visible" && S.settings && S.key && !S.es) connect();
   });
   setInterval(renderStatusBar, 15000);
+  startHeartbeat();
   await render();
   if (S.settings && S.key) startFeed();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});

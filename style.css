@@ -307,3 +307,31 @@ details.card[open] > summary { margin-bottom: 10px; }
 
 .thread, .bubble, .turn { min-width: 0; max-width: 100%; }
 .bubble pre, .bubble .text { max-width: 100%; }
+
+.dot.online { background: var(--ok); }
+.dot.waiting { background: var(--attn-line); }
+.dot.offline { background: var(--danger); }
+.dot.unknown { background: var(--muted); }
+.st-offline { color: var(--danger); }
+.chip.off { opacity: 0.55; }
+
+.sessions { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sessions li { border-top: 1px solid var(--line); padding-top: 8px; }
+.sessions .prompt { margin: 0 0 2px; }
+.sessions .last {
+  color: var(--muted);
+  margin-top: 4px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+.linkbtn {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--text);
+}

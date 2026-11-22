@@ -55,6 +55,8 @@ Common fields on every message: `id`, `ts`, `type`, `from` (`"phone"` or the mac
 | `ping` | — | Every Mac replies with `hello` |
 | `history` | `since?` (unix ts), `limit?` (default 50, max 500) | Each Mac replies with `history` |
 | `fetch_result` | `job`, `turn?` (default: latest) | The owning Mac re-sends a `result` message (attachment if large) |
+| `sessions` | `target?`, `work?`, `limit?` (default 15, max 50) | The target (or every Mac with `work`) lists recent Claude sessions in its repos, including ones started in a terminal |
+| `adopt` | `target`, `job`, `work`, `session_id` | The target turns that session into job `job` (state `done`, turn 0 = the session's last messages). Its first `reply` resumes with `--fork-session`, so the original session is left untouched |
 
 **Routing (Mac side):**
 - **`run`:** act only if `work` is in this Mac's `repos` map **and** (`target` is empty or equals `machine`). Otherwise ignore silently. A `job` id that already exists is ignored.
@@ -71,6 +73,7 @@ Common fields on every message: `id`, `ts`, `type`, `from` (`"phone"` or the mac
 | `hello` | `machine`, `works` (list of work ids), `version`, `busy_jobs` (list), `battery?` (`{pct, charging}`) |
 | `history` | `machine`, `jobs`: list of `{job, work, prompt, state, created, updated, turns}` (no bodies) |
 | `result` | `job`, `machine`, `turn`, `input`, `result` (full text, STATUS line stripped), `log_tail` (last 4 KB of stderr) |
+| `sessions` | `machine`, `sessions`: list of `{session_id, work, updated, title, last, origin ("terminal"\|"headless"), job?}` |
 
 **`state` values:** `queued`, `started`, `needs_input`, `done`, `failed`, `cancelled`, `busy_rejected`.
 
@@ -94,6 +97,9 @@ For `needs_input`, the text goes in `question`; otherwise in `summary`. When the
 - `Click: <page_url>#job=<job>`
 - `Priority: high` for `needs_input` and `failed`, `default` for other statuses. `hello`, `history` and `result` use `Title: Machine update` and `Priority: min` so they don't buzz the phone (except the battery warning: `Battery low`, `high`).
 - `Tags`: `question` / `white_check_mark` / `x` / `rocket` / `computer` / `battery` (generic only).
+
+### 5.2.1 Quiet topic
+Responses that should not notify the phone (`hello` replies to `ping`, `history`, `sessions`, `result` for `fetch_result`) go to `<RES_TOPIC>-quiet`. The ntfy phone app subscribes only to `RES_TOPIC`; the page subscribes to both (`/<RES_TOPIC>,<RES_TOPIC>-quiet/sse`). `status` messages and the battery warning always go to `RES_TOPIC`.
 
 ### 5.3 Large results
 1. Seal the `result` message exactly like any message, giving envelope bytes.
