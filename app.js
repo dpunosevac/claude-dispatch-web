@@ -1085,7 +1085,33 @@ async function boot() {
   startHeartbeat();
   await render();
   if (S.settings && S.key) startFeed();
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
+  if ("serviceWorker" in navigator) {
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloading = false;
+    // A new version took over: reload once so it is used now, not on the next launch.
+    const typing = () => [...document.querySelectorAll("textarea, input")].some((el) => el.value.trim());
+    const reloadSoon = () => {
+      if (reloading) return;
+      if (typing()) {
+        // Never throw away a half-written prompt; try again once the boxes are empty.
+        setTimeout(reloadSoon, 5000);
+        return;
+      }
+      reloading = true;
+      location.reload();
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (hadController) reloadSoon();
+    });
+    navigator.serviceWorker
+      .register("./sw.js", { updateViaCache: "none" })
+      .then((reg) => {
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "visible") reg.update().catch(() => {});
+        });
+      })
+      .catch(() => {});
+  }
   // Asks the browser not to evict the key and cache under storage pressure.
   S.persisted = (await navigator.storage?.persist?.().catch(() => false)) || false;
 }
