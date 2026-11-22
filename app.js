@@ -149,7 +149,7 @@ async function onHello(m) {
   const recv = S.live ? Date.now() : m.ts * 1000;
   const prev = S.machines.get(m.machine);
   if (prev && (prev.recv || 0) > recv) return;
-  const rec = { machine: m.machine, works: m.works || [], version: m.version, busy_jobs: m.busy_jobs || [], battery: m.battery, seen: m.ts, recv };
+  const rec = { machine: m.machine, works: m.works || [], version: m.version, busy_jobs: m.busy_jobs || [], battery: m.battery, sleep_disabled: m.sleep_disabled, seen: m.ts, recv };
   S.machines.set(m.machine, rec);
   await DB.put("machines", rec);
 }
@@ -723,6 +723,21 @@ function sessionList(m) {
   );
 }
 
+/** The laptop's "never sleep" power setting, with the command to undo it. */
+function sleepInfo(m) {
+  if (m.sleep_disabled === undefined || m.sleep_disabled === null) {
+    return h("div", { class: "muted small" }, "Sleep setting: unknown (needs cdispatch 0.3.1+)");
+  }
+  if (!m.sleep_disabled) return h("div", { class: "power" }, h("span", { class: "badge s-cancelled" }, "Sleeps normally"));
+  return h(
+    "details",
+    { class: "power" },
+    h("summary", {}, h("span", { class: "badge s-needs_input" }, "Never sleeps"), " lid closed included"),
+    h("p", { class: "muted small" }, "Runs warm in a bag. To let it sleep again, run on that laptop:"),
+    h("pre", {}, "sudo pmset -a disablesleep 0"),
+  );
+}
+
 const SESSIONS_STALE_MS = 2 * 60_000;
 
 const sessionsAsked = new Map(); // machine -> ms of the last request
@@ -796,6 +811,7 @@ function renderMachines() {
                   .join(" · "),
               ),
               low ? h("div", { class: "error" }, "Battery low") : null,
+              sleepInfo(m),
               sessionsPanel(m),
             );
           }),

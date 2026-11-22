@@ -345,3 +345,16 @@ details.card[open] > summary { margin-bottom: 10px; }
 }
 .sessions-panel .sessions { margin-top: 0; }
 .sessions-panel .sessions li:first-child { border-top: 0; padding-top: 0; }
+
+.power { margin-top: 8px; }
+.power > summary { min-height: 36px; line-height: 36px; cursor: pointer; font-size: 0.85rem; color: var(--muted); }
+.power pre {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  user-select: all;
+  -webkit-user-select: all;
+}
+.power .badge { line-height: 1.5; vertical-align: middle; }

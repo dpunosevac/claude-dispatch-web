@@ -70,7 +70,7 @@ Common fields on every message: `id`, `ts`, `type`, `from` (`"phone"` or the mac
 | type | fields |
 |---|---|
 | `status` | `job`, `machine`, `work`, `state`, `turn`, `session_id?`, `summary?` (≤ 1500 characters), `question?`, `cost_usd?`, `duration_s?`, `attachment?` (bool), `error?` |
-| `hello` | `machine`, `works` (list of work ids), `version`, `busy_jobs` (list), `battery?` (`{pct, charging}`) |
+| `hello` | `machine`, `works` (list of work ids), `version`, `busy_jobs` (list), `battery?` (`{pct, charging}`), `sleep_disabled?` (bool, `pmset -g` SleepDisabled) |
 | `history` | `machine`, `jobs`: list of `{job, work, prompt, state, created, updated, turns}` (no bodies) |
 | `result` | `job`, `machine`, `turn`, `input`, `result` (full text, STATUS line stripped), `log_tail` (last 4 KB of stderr) |
 | `sessions` | `machine`, `sessions`: list of `{session_id, work, updated, title, last, origin ("terminal"\|"headless"), job?}` |
