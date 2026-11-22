@@ -1,6 +1,7 @@
 import * as C from "./crypto.js";
 import * as DB from "./db.js";
 import { parseCommand } from "./command.js";
+import { parseSetup } from "./setup.js";
 
 const STATE_RANK = { sent: 0, queued: 1, started: 2 };
 const TERMINAL = new Set(["done", "failed", "cancelled", "busy_rejected"]);
@@ -23,6 +24,7 @@ const S = {
   composeError: "",
   composeChoices: null,
   pending: null,
+  importing: null, // parsed setup code awaiting confirmation
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -357,6 +359,7 @@ function shell(...content) {
 }
 
 async function render() {
+  if (S.importing) return renderImport();
   if (!S.settings || !S.key) return renderSetup(true);
   const hash = location.hash;
   if (hash === "#setup") return renderSetup(false);
@@ -576,14 +579,196 @@ function renderMachines() {
   );
 }
 
+/** Validates and stores settings plus an optional new key, then (re)starts the feed. */
+async function applySettings(settings, keyText) {
+  if (!settings.server.startsWith("https://") || !settings.req || !settings.res || settings.req === settings.res) {
+    throw new Error("Server must be https and topics must be set and differ");
+  }
+  if (keyText) {
+    S.key = await C.importKey(keyText);
+    await DB.put("kv", S.key, "key");
+  } else if (!S.key) {
+    throw new Error("Key is required");
+  }
+  const changed = JSON.stringify(settings) !== JSON.stringify(S.settings);
+  if (changed && S.settings) {
+    // Cached jobs and machines belong to the old topics.
+    await DB.clearStores(["jobs", "turns", "machines"]);
+    S.jobs.clear();
+    S.machines.clear();
+    S.seen.clear();
+  }
+  S.settings = settings;
+  await DB.put("kv", settings, "settings");
+  S.opened = S.failed = 0;
+  if (changed) {
+    S.lastId = null;
+    await DB.put("kv", false, "historyRequested");
+  }
+  toast("Saved");
+  location.hash = "#";
+  await render();
+  startFeed();
+}
+
+function beginImport(text) {
+  const sc = parseSetup(text);
+  if (!sc) {
+    toast("That is not a valid setup code");
+    return false;
+  }
+  S.importing = sc;
+  render();
+  return true;
+}
+
+/** Confirmation step, so a link someone sends you cannot silently replace your key and topics. */
+function renderImport() {
+  const sc = S.importing;
+  const replacing = S.settings && S.key && (sc.server !== S.settings.server || sc.req !== S.settings.req || sc.res !== S.settings.res);
+  const row = (k, v) => h("div", { class: "kvrow" }, h("span", { class: "muted small" }, k), h("code", {}, v));
+  app().replaceChildren(
+    h(
+      "div",
+      { class: "card setup" },
+      h("h2", {}, "Import setup?"),
+      h("p", { class: "muted small" }, "Only continue if this came from your own `cdispatch pair`."),
+      row("Server", sc.server),
+      row("Request topic", sc.req),
+      row("Response topic", sc.res),
+      row("Key", "•••••••• (43 characters)"),
+      replacing ? h("div", { class: "banner error" }, "This replaces the key and topics currently on this device.") : null,
+      h(
+        "div",
+        { class: "actions" },
+        h(
+          "button",
+          {
+            class: "primary",
+            onclick: async () => {
+              S.importing = null;
+              try {
+                await applySettings({ server: sc.server, req: sc.req, res: sc.res }, sc.key);
+              } catch (err) {
+                toast(String(err.message || err));
+                render();
+              }
+            },
+          },
+          "Import",
+        ),
+        h(
+          "button",
+          {
+            onclick: () => {
+              S.importing = null;
+              render();
+            },
+          },
+          "Cancel",
+        ),
+      ),
+    ),
+  );
+}
+
+function loadJsQR() {
+  if (window.jsQR) return Promise.resolve(window.jsQR);
+  return new Promise((resolve, reject) => {
+    const sc = document.createElement("script");
+    sc.src = "vendor/jsQR.js";
+    sc.onload = () => resolve(window.jsQR);
+    sc.onerror = () => reject(new Error("Could not load the QR scanner"));
+    document.head.append(sc);
+  });
+}
+
+/** Full-screen camera view that decodes QR codes until it finds a setup code. */
+async function scanSetup() {
+  let stream;
+  const video = h("video", { playsinline: true, muted: true, autoplay: true });
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  let done = false;
+  const close = () => {
+    done = true;
+    stream?.getTracks().forEach((t) => t.stop());
+    overlay.remove();
+  };
+  const overlay = h(
+    "div",
+    { class: "scanner", role: "dialog", "aria-label": "Scan setup QR" },
+    video,
+    h("div", { class: "scanframe", "aria-hidden": "true" }),
+    h("p", {}, "Point the camera at the QR from `cdispatch pair`"),
+    h("button", { onclick: close }, "Cancel"),
+  );
+  document.body.append(overlay);
+  try {
+    const [jsQR, s] = await Promise.all([
+      loadJsQR(),
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false }),
+    ]);
+    stream = s;
+    if (done) return close();
+    video.srcObject = stream;
+    await video.play();
+    const tick = () => {
+      if (done) return;
+      const w = video.videoWidth, hgt = video.videoHeight;
+      if (w && hgt) {
+        const scale = Math.min(1, 720 / Math.max(w, hgt));
+        canvas.width = Math.round(w * scale);
+        canvas.height = Math.round(hgt * scale);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const r = jsQR(img.data, img.width, img.height, { inversionAttempts: "attemptBoth" });
+        if (r && parseSetup(r.data)) {
+          close();
+          beginImport(r.data);
+          return;
+        }
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } catch (err) {
+    close();
+    toast(err.name === "NotAllowedError" ? "Camera permission denied" : String(err.message || err));
+  }
+}
+
 function renderSetup(first) {
   const s = S.settings || { server: "https://ntfy.sh", req: "", res: "" };
   const field = (label, name, value, type = "text", extra = {}) =>
     h("label", { class: "field" }, h("span", {}, label), h("input", { name, type, value, autocomplete: "off", autocapitalize: "off", spellcheck: "false", ...extra }));
+  const canScan = !!navigator.mediaDevices?.getUserMedia;
+  const paste = h("input", { type: "password", placeholder: "Paste setup link", autocomplete: "off", "aria-label": "Setup link" });
+  const quick = h(
+    "div",
+    { class: "card setup" },
+    h("h2", {}, first ? "Set up claude-dispatch" : "Settings"),
+    h("p", { class: "muted small" }, "On a Mac run `cdispatch pair`, then scan its QR here. The key is stored on this device as a non-extractable WebCrypto key."),
+    canScan ? h("button", { class: "primary", onclick: scanSetup }, "Scan setup QR") : null,
+    h(
+      "form",
+      {
+        class: "row",
+        onsubmit: (e) => {
+          e.preventDefault();
+          const v = paste.value;
+          paste.value = "";
+          beginImport(v);
+        },
+      },
+      paste,
+      h("button", { type: "submit" }, "Use"),
+    ),
+  );
   const form = h(
     "form",
     {
-      class: "card setup",
+      class: "setup",
       onsubmit: async (e) => {
         e.preventDefault();
         const f = new FormData(e.target);
@@ -594,41 +779,20 @@ function renderSetup(first) {
         };
         const keyText = String(f.get("key")).trim();
         e.target.elements.key.value = "";
-        if (!settings.server.startsWith("https://") || !settings.req || !settings.res || settings.req === settings.res) {
-          return toast("Server must be https and topics must be set and differ");
-        }
         try {
-          if (keyText) {
-            S.key = await C.importKey(keyText);
-            await DB.put("kv", S.key, "key");
-          } else if (!S.key) {
-            return toast("Key is required");
-          }
+          await applySettings(settings, keyText);
         } catch (err) {
-          return toast(String(err.message || err));
+          toast(String(err.message || err));
         }
-        const changed = JSON.stringify(settings) !== JSON.stringify(S.settings);
-        S.settings = settings;
-        await DB.put("kv", settings, "settings");
-        S.opened = S.failed = 0;
-        if (changed) {
-          S.lastId = null;
-          await DB.put("kv", false, "historyRequested");
-        }
-        toast("Saved");
-        location.hash = "#";
-        await render();
-        startFeed();
       },
     },
-    h("h2", {}, first ? "Set up claude-dispatch" : "Settings"),
-    h("p", { class: "muted small" }, "Values come from `cdispatch keygen`. The key is stored on this device as a non-extractable WebCrypto key."),
     field("Server", "server", s.server, "url"),
     field("Request topic (REQ_TOPIC)", "req", s.req),
     field("Response topic (RES_TOPIC)", "res", s.res),
     field("Key", "key", "", "password", { placeholder: S.key ? "(unchanged)" : "43-character key", required: !S.key }),
     h("button", { class: "primary", type: "submit" }, "Save"),
   );
+  const manual = h("details", { class: "card", open: !first && !!S.settings }, h("summary", {}, "Enter values manually"), form);
   const danger = first
     ? null
     : h(
@@ -651,8 +815,18 @@ function renderSetup(first) {
           "Erase this device",
         ),
       );
-  if (first) app().replaceChildren(form);
-  else shell(form, danger);
+  if (first) app().replaceChildren(quick, manual);
+  else shell(quick, manual, danger);
+}
+
+/** Moves a `#setup=` fragment into memory and strips it from the URL and history entry. */
+function takeSetupFromUrl() {
+  if (!location.hash.startsWith("#setup=")) return false;
+  const text = location.hash;
+  history.replaceState(null, "", location.pathname + location.search);
+  S.importing = parseSetup(text);
+  if (!S.importing) toast("That setup link is not valid");
+  return true;
 }
 
 // ---------- boot ----------
@@ -665,7 +839,11 @@ async function boot() {
   S.lastRecv = (await DB.get("kv", "lastRecv")) || 0;
   for (const j of await DB.all("jobs")) S.jobs.set(j.job, j);
   for (const m of await DB.all("machines")) S.machines.set(m.machine, m);
-  window.addEventListener("hashchange", () => render());
+  takeSetupFromUrl();
+  window.addEventListener("hashchange", () => {
+    takeSetupFromUrl();
+    render();
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && S.settings && S.key && !S.es) connect();
   });

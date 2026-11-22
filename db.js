@@ -56,8 +56,11 @@ export async function turnsFor(job) {
 }
 
 export async function clearAll() {
+  return clearStores(["kv", "jobs", "turns", "machines"]);
+}
+
+export async function clearStores(names) {
   const db = await openDb();
-  const names = ["kv", "jobs", "turns", "machines"];
   const tx = db.transaction(names, "readwrite");
   for (const n of names) tx.objectStore(n).clear();
   return new Promise((resolve, reject) => {

@@ -223,3 +223,37 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.8rem; margin:
   .toast { animation: rise 0.18s ease-out; }
   @keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } }
 }
+
+.kvrow { display: flex; flex-direction: column; gap: 2px; }
+.kvrow code { font-size: 0.85rem; overflow-wrap: anywhere; }
+details.card > summary { font-weight: 600; color: var(--text); }
+details.card[open] > summary { margin-bottom: 10px; }
+
+.scanner {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: #000;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+}
+.scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.scanner .scanframe {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(70vw, 320px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border: 3px solid rgba(255, 255, 255, 0.85);
+  border-radius: 16px;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45);
+}
+.scanner p, .scanner button { position: relative; }
+.scanner p { text-align: center; margin: 0; }
+.scanner button { background: #fff; color: #000; border: 0; min-width: 160px; }
