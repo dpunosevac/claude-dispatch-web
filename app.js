@@ -155,7 +155,10 @@ async function onHello(m) {
 }
 
 function onSessions(m) {
-  S.sessions.set(m.machine, { at: Date.now(), list: m.sessions || [] });
+  // Lists replayed by the 12h backfill keep their age, so opening the panel refreshes them.
+  const at = S.live ? Date.now() : m.ts * 1000;
+  if ((S.sessions.get(m.machine)?.at || 0) > at) return;
+  S.sessions.set(m.machine, { at, list: m.sessions || [] });
 }
 
 async function onHistory(m) {
@@ -720,6 +723,45 @@ function sessionList(m) {
   );
 }
 
+const SESSIONS_STALE_MS = 2 * 60_000;
+
+const sessionsAsked = new Map(); // machine -> ms of the last request
+
+function requestSessions(machine, force = false) {
+  if (!force && Date.now() - (sessionsAsked.get(machine) || 0) < 30_000) return Promise.resolve(false);
+  sessionsAsked.set(machine, Date.now());
+  return send(C.request("sessions", { target: machine, limit: 15 }));
+}
+
+/** Collapsible per-laptop session list; opening it fetches the list if it is missing or stale. */
+function sessionsPanel(m) {
+  const entry = S.sessions.get(m.machine);
+  const pref = `cd-sessions-open:${m.machine}`;
+  const open = prefGet(pref) === "1";
+  const stale = () => {
+    const e = S.sessions.get(m.machine);
+    return !e || Date.now() - e.at > SESSIONS_STALE_MS;
+  };
+  if (open && stale()) requestSessions(m.machine);
+  return h(
+    "details",
+    { class: "sessions-panel", open },
+    h(
+      "summary",
+      {
+        onclick: (e) => {
+          const opening = !e.currentTarget.parentElement.open;
+          prefSet(pref, opening ? "1" : "0");
+          if (opening && stale()) requestSessions(m.machine);
+        },
+      },
+      entry ? `Claude sessions (${entry.list.length})` : "Claude sessions",
+    ),
+    entry ? sessionList(m) : h("p", { class: "muted small" }, "Loading…"),
+    entry ? h("button", { class: "small-btn", onclick: () => requestSessions(m.machine, true).then((ok) => ok && toast("Refreshing sessions")) }, "Refresh") : null,
+  );
+}
+
 function renderMachines() {
   const ms = knownMachines();
   shell(
@@ -754,15 +796,7 @@ function renderMachines() {
                   .join(" · "),
               ),
               low ? h("div", { class: "error" }, "Battery low") : null,
-              h(
-                "button",
-                {
-                  class: "small-btn",
-                  onclick: () => send(C.request("sessions", { target: m.machine, limit: 15 }), `Asked ${m.machine} for its sessions`),
-                },
-                S.sessions.has(m.machine) ? "Refresh sessions" : "Show Claude sessions",
-              ),
-              sessionList(m),
+              sessionsPanel(m),
             );
           }),
         )
