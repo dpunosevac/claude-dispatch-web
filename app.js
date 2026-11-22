@@ -28,6 +28,7 @@ const S = {
   live: false, // true once the 12h backfill is done and messages arrive in real time
   lastPingAt: 0,
   sessions: new Map(), // machine -> {at, list}
+  persisted: false,
   importing: null, // parsed setup code awaiting confirmation
 };
 
@@ -276,10 +277,9 @@ async function startFeed() {
   await prune();
   scheduleRender();
   connect();
-  if (!(await DB.get("kv", "historyRequested"))) {
-    await DB.put("kv", true, "historyRequested");
-    send(C.request("history", { limit: 50 }));
-  }
+  // Laptops are the source of truth; refilling on every load repairs a cache that iOS cleared
+  // or that belongs to the other storage (Safari tab vs. home-screen app).
+  send(C.request("history", { since: Math.floor(Date.now() / 1000) - KEEP_DAYS * 86400, limit: 100 }));
   ping();
 }
 
@@ -794,7 +794,6 @@ async function applySettings(settings, keyText) {
   S.opened = S.failed = 0;
   if (changed) {
     S.lastId = null;
-    await DB.put("kv", false, "historyRequested");
   }
   toast("Saved");
   location.hash = "#";
@@ -990,6 +989,13 @@ function renderSetup(first) {
         "div",
         { class: "card" },
         h("h3", {}, "Local data"),
+        h(
+          "p",
+          { class: "muted small" },
+          S.persisted
+            ? "Storage is persistent on this device."
+            : "This browser may clear stored data when space is low or after 7 days unused (Safari). Use the home-screen app; re-pair with `cdispatch pair` if setup disappears.",
+        ),
         h("p", { class: "muted small" }, "Removes the key, settings and cached jobs from this device."),
         h(
           "button",
@@ -1046,6 +1052,8 @@ async function boot() {
   await render();
   if (S.settings && S.key) startFeed();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
+  // Asks the browser not to evict the key and cache under storage pressure.
+  S.persisted = (await navigator.storage?.persist?.().catch(() => false)) || false;
 }
 
 boot().catch((e) => {
