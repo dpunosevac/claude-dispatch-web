@@ -1,7 +1,7 @@
 // Offline shell: network first, cached copy when offline. Cross-origin (ntfy) is never cached.
 // Requests revalidate with the server (cache: "no-cache") because GitHub Pages sends
 // max-age=600, which would otherwise serve a stale app for 10 minutes after a deploy.
-const CACHE = "cd-shell-v11";
+const CACHE = "cd-shell-v12";
 const SHELL = ["./", "index.html", "app.js", "crypto.js", "db.js", "command.js", "setup.js", "style.css", "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {

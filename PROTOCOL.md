@@ -55,7 +55,7 @@ Common fields on every message: `id`, `ts`, `type`, `from` (`"phone"` or the mac
 | `ping` | — | Every Mac replies with `hello` |
 | `history` | `since?` (unix ts), `limit?` (default 50, max 500) | Each Mac replies with `history` |
 | `fetch_result` | `job`, `turn?` (default: latest) | The owning Mac re-sends a `result` message (attachment if large) |
-| `sessions` | `target?`, `work?`, `limit?` (default 15, max 50) | The target (or every Mac with `work`) lists recent Claude sessions in its repos, including ones started in a terminal |
+| `sessions` | `target?`, `work?`, `limit?` (default 30, max 100) | The target (or every Mac with `work`) lists recent Claude sessions in its repos, including ones started in a terminal |
 | `adopt` | `target`, `job`, `work`, `session_id`, `fork?` (default false) | The target turns that session into job `job` (state `done`, turn 0 = the session's last messages). Replies resume **that same session** (`--resume <id>`), so the laptop sees the phone's turns after `claude --resume <id>`; an open terminal on the session must be exited first, or the two histories interleave. With `fork: true` the first reply adds `--fork-session` and later replies continue the copy, leaving the original untouched |
 
 **Routing (Mac side):**
@@ -73,7 +73,7 @@ Common fields on every message: `id`, `ts`, `type`, `from` (`"phone"` or the mac
 | `hello` | `machine`, `works` (list of work ids), `version`, `busy_jobs` (list), `battery?` (`{pct, charging}`), `sleep_disabled?` (bool, `pmset -g` SleepDisabled) |
 | `history` | `machine`, `jobs`: list of `{job, work, prompt, state, created, updated, turns}` (no bodies) |
 | `result` | `job`, `machine`, `turn`, `input`, `result` (full text, STATUS line stripped), `log_tail` (last 4 KB of stderr) |
-| `sessions` | `machine`, `sessions`: list of `{session_id, work, updated, title, last, origin ("terminal"\|"headless"), job?}` |
+| `sessions` | `machine`, `sessions`: list of `{session_id, work, dir?, updated, title, last, origin ("terminal"\|"headless"), job?}` |
 
 **`state` values:** `queued`, `started`, `needs_input`, `done`, `failed`, `cancelled`, `busy_rejected`.
 

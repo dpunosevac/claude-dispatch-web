@@ -371,6 +371,7 @@ async function adoptSession(machine, sess, fork = false) {
     local: true,
     adopted: fork ? "fork" : "same",
     session_id: sess.session_id,
+    dir: sess.dir || "",
   });
   const req = { target: machine, job, work: sess.work, session_id: sess.session_id };
   if (fork) req.fork = true;
@@ -716,7 +717,7 @@ async function renderJob(id) {
             "details",
             { class: "power" },
             h("summary", {}, "Open this session on the laptop"),
-            h("p", { class: "muted small" }, `In the ${j.work || "repo"} folder on ${j.machine || "the laptop"}:`),
+            h("p", { class: "muted small" }, `In the ${j.work ? (j.dir ? `${j.work}/${j.dir}` : j.work) : "repo"} folder on ${j.machine || "the laptop"}:`),
             h("pre", {}, `claude --resume ${j.session_id}`),
           )
         : null,
@@ -751,7 +752,7 @@ function sessionList(m) {
         h(
           "div",
           { class: "muted small" },
-          [sess.work, sess.origin === "terminal" ? "terminal" : "headless", ago(sess.updated)].join(" · "),
+          [sess.dir ? `${sess.work}/${sess.dir}` : sess.work, sess.origin === "terminal" ? "terminal" : "headless", ago(sess.updated)].join(" · "),
         ),
         sess.last ? h("div", { class: "last small" }, sess.last) : null,
         h(
@@ -786,10 +787,14 @@ const SESSIONS_STALE_MS = 2 * 60_000;
 
 const sessionsAsked = new Map(); // machine -> ms of the last request
 
+const sessionsLimit = new Map(); // machine -> how many sessions to ask for
+const SESSIONS_PAGE = 30;
+const SESSIONS_MAX = 100;
+
 function requestSessions(machine, force = false) {
   if (!force && Date.now() - (sessionsAsked.get(machine) || 0) < 30_000) return Promise.resolve(false);
   sessionsAsked.set(machine, Date.now());
-  return send(C.request("sessions", { target: machine, limit: 15 }));
+  return send(C.request("sessions", { target: machine, limit: sessionsLimit.get(machine) || SESSIONS_PAGE }));
 }
 
 /** Collapsible per-laptop session list; opening it fetches the list if it is missing or stale. */
@@ -817,7 +822,26 @@ function sessionsPanel(m) {
       entry ? `Claude sessions (${entry.list.length})` : "Claude sessions",
     ),
     entry ? sessionList(m) : h("p", { class: "muted small" }, "Loading…"),
-    entry ? h("button", { class: "small-btn", onclick: () => requestSessions(m.machine, true).then((ok) => ok && toast("Refreshing sessions")) }, "Refresh") : null,
+    entry
+      ? h(
+          "div",
+          { class: "actions" },
+          h("button", { class: "small-btn", onclick: () => requestSessions(m.machine, true).then((ok) => ok && toast("Refreshing sessions")) }, "Refresh"),
+          entry.list.length >= (sessionsLimit.get(m.machine) || SESSIONS_PAGE) && (sessionsLimit.get(m.machine) || SESSIONS_PAGE) < SESSIONS_MAX
+            ? h(
+                "button",
+                {
+                  class: "small-btn",
+                  onclick: () => {
+                    sessionsLimit.set(m.machine, Math.min(SESSIONS_MAX, (sessionsLimit.get(m.machine) || SESSIONS_PAGE) + SESSIONS_PAGE));
+                    requestSessions(m.machine, true).then((ok) => ok && toast("Loading more sessions"));
+                  },
+                },
+                "Show more",
+              )
+            : null,
+        )
+      : null,
   );
 }
 
