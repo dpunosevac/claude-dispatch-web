@@ -56,7 +56,7 @@ Common fields on every message: `id`, `ts`, `type`, `from` (`"phone"` or the mac
 | `history` | `since?` (unix ts), `limit?` (default 50, max 500) | Each Mac replies with `history` |
 | `fetch_result` | `job`, `turn?` (default: latest) | The owning Mac re-sends a `result` message (attachment if large) |
 | `sessions` | `target?`, `work?`, `limit?` (default 15, max 50) | The target (or every Mac with `work`) lists recent Claude sessions in its repos, including ones started in a terminal |
-| `adopt` | `target`, `job`, `work`, `session_id` | The target turns that session into job `job` (state `done`, turn 0 = the session's last messages). Its first `reply` resumes with `--fork-session`, so the original session is left untouched |
+| `adopt` | `target`, `job`, `work`, `session_id`, `fork?` (default false) | The target turns that session into job `job` (state `done`, turn 0 = the session's last messages). Replies resume **that same session** (`--resume <id>`), so the laptop sees the phone's turns after `claude --resume <id>`; an open terminal on the session must be exited first, or the two histories interleave. With `fork: true` the first reply adds `--fork-session` and later replies continue the copy, leaving the original untouched |
 
 **Routing (Mac side):**
 - **`run`:** act only if `work` is in this Mac's `repos` map **and** (`target` is empty or equals `machine`). Otherwise ignore silently. A `job` id that already exists is ignored.

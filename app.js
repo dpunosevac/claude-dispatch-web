@@ -355,11 +355,26 @@ function ping() {
   return send(C.request("ping"));
 }
 
-async function adoptSession(machine, sess) {
+/** Opens a laptop session as a job: the same session by default, or a forked copy. */
+async function adoptSession(machine, sess, fork = false) {
   const job = C.randomHex(4);
   const now = Math.floor(Date.now() / 1000);
-  await saveJob({ job, work: sess.work, prompt: sess.title, machine, state: "sent", turn: 0, created: now, updated: now, local: true });
-  if (await send(C.request("adopt", { target: machine, job, work: sess.work, session_id: sess.session_id }))) location.hash = `#job=${job}`;
+  await saveJob({
+    job,
+    work: sess.work,
+    prompt: sess.title,
+    machine,
+    state: "sent",
+    turn: 0,
+    created: now,
+    updated: now,
+    local: true,
+    adopted: fork ? "fork" : "same",
+    session_id: sess.session_id,
+  });
+  const req = { target: machine, job, work: sess.work, session_id: sess.session_id };
+  if (fork) req.fork = true;
+  if (await send(C.request("adopt", req))) location.hash = `#job=${job}`;
 }
 
 // ---------- actions ----------
@@ -691,6 +706,20 @@ async function renderJob(id) {
       h("h2", { class: "prompt" }, j.prompt || `(job ${j.job})`),
       h("div", { class: "muted small" }, [j.work, j.machine && `@${j.machine}`, `job ${j.job}`, totalCost && `$${totalCost.toFixed(2)}`].filter(Boolean).join(" · ")),
       lastQ ? h("div", { class: "banner attn" }, h("strong", {}, "Claude is asking: "), lastQ.question || lastQ.summary || "see below") : null,
+      j.adopted === "same"
+        ? h("div", { class: "banner" }, "Same session as on the laptop. Exit Claude there while you continue here, then resume it with the command below.")
+        : j.adopted === "fork"
+          ? h("div", { class: "banner" }, "Forked copy: the session on the laptop is not changed by replies here.")
+          : null,
+      j.session_id
+        ? h(
+            "details",
+            { class: "power" },
+            h("summary", {}, "Open this session on the laptop"),
+            h("p", { class: "muted small" }, `In the ${j.work || "repo"} folder on ${j.machine || "the laptop"}:`),
+            h("pre", {}, `claude --resume ${j.session_id}`),
+          )
+        : null,
       h(
         "div",
         { class: "actions" },
@@ -725,16 +754,14 @@ function sessionList(m) {
           [sess.work, sess.origin === "terminal" ? "terminal" : "headless", ago(sess.updated)].join(" · "),
         ),
         sess.last ? h("div", { class: "last small" }, sess.last) : null,
-        sess.job
-          ? h("a", { class: "small-btn linkbtn", href: `#job=${encodeURIComponent(sess.job)}` }, "Open job")
-          : h(
-              "button",
-              {
-                class: "small-btn",
-                onclick: () => adoptSession(m.machine, sess),
-              },
-              "Continue on phone",
-            ),
+        h(
+          "div",
+          { class: "actions" },
+          sess.job
+            ? h("a", { class: "small-btn linkbtn", href: `#job=${encodeURIComponent(sess.job)}` }, "Open job")
+            : h("button", { class: "small-btn", onclick: () => adoptSession(m.machine, sess) }, "Continue on phone"),
+          h("button", { class: "small-btn", onclick: () => adoptSession(m.machine, sess, true) }, "Fork copy"),
+        ),
       ),
     ),
   );

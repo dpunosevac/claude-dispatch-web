@@ -358,3 +358,4 @@ details.card[open] > summary { margin-bottom: 10px; }
   -webkit-user-select: all;
 }
 .power .badge { line-height: 1.5; vertical-align: middle; }
+.banner:not(.error):not(.attn) { background: var(--card); border: 1px solid var(--line); font-size: 0.9rem; }
